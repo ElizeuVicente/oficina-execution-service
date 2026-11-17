@@ -6,19 +6,7 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      codeql:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with: {distribution: temurin, java-version: '17', cache: maven}
-      - uses: github/codeql-action/init@v4
-        with:
-          languages: java-kotlin
-          build-mode: manual
-      - run: mvn -B -DskipTests package
-      - uses: github/codeql-action/analyze@v4
-  deploy:
+      deploy:
         description: Deploy no Kubernetes configurado
         type: boolean
         default: false
