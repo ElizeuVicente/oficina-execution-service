@@ -51,33 +51,38 @@ jobs:
   deploy:
     if: github.event_name == 'workflow_dispatch' && inputs.deploy && github.ref == 'refs/heads/main'
     needs: [verify, codeql]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, oficina-deploy]
     environment: homolog
     permissions:
       contents: read
-      packages: write
+    env:
+      AWS_PROFILE: fiap-lab
+      AWS_REGION: us-east-1
+      EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
+      ECR_REPOSITORY_URL: ${{ vars.ECR_REPOSITORY_URL }}
+      K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE || 'oficina-prod' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: azure/setup-kubectl@v4
-      - name: Publicar imagem por commit
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_SHA}"
-          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          docker build -t "$IMAGE" .
-          docker push "$IMAGE"
-          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
-      - name: Aplicar manifests e validar rollout
-        env:
-          KUBE_CONFIG_B64: ${{ secrets.KUBE_CONFIG_B64 }}
-          K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE || 'oficina' }}
+      - name: Confirmar pré-requisitos
         run: |
           set -eu
-          test -n "$KUBE_CONFIG_B64"
-          install -m 600 /dev/null "$RUNNER_TEMP/kubeconfig"
-          printf '%s' "$KUBE_CONFIG_B64" | base64 -d > "$RUNNER_TEMP/kubeconfig"
+          test -n "$EKS_CLUSTER_NAME" && test -n "$ECR_REPOSITORY_URL"
+          aws sts get-caller-identity --query Arn --output text >/dev/null
+      - name: Publicar imagem por commit no ECR
+        run: |
+          set -eu
+          IMAGE="${ECR_REPOSITORY_URL}:${GITHUB_SHA}"
+          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "${ECR_REPOSITORY_URL%/*}"
+          if ! aws ecr describe-images --repository-name "${ECR_REPOSITORY_URL##*/}" --image-ids "imageTag=${GITHUB_SHA}" >/dev/null 2>&1; then
+            docker build -t "$IMAGE" .
+            docker push "$IMAGE"
+          fi
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+      - name: Aplicar manifests e validar rollout
+        run: |
+          set -eu
           export KUBECONFIG="$RUNNER_TEMP/kubeconfig"
+          aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER_NAME" --kubeconfig "$KUBECONFIG" >/dev/null
           kubectl -n "$K8S_NAMESPACE" get secret oficina-execution-config >/dev/null
           kubectl kustomize k8s/ | sed "s|image: oficina-execution:local|image: $IMAGE|" | kubectl -n "$K8S_NAMESPACE" apply -f -
-          kubectl -n "$K8S_NAMESPACE" rollout status deployment/oficina-execution --timeout=180s
+          kubectl -n "$K8S_NAMESPACE" rollout status deployment/oficina-execution --timeout=300s
