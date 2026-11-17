@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oficina-execution
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: oficina-execution}
+  template:
+    metadata:
+      labels: {app: oficina-execution}
+    spec:
+      containers:
+        - name: execution
+          image: oficina-execution:local
+          ports:
+            - containerPort: 8082
+          envFrom:
+            - secretRef: {name: oficina-execution-config}
+          readinessProbe:
+            httpGet: {path: /actuator/health, port: 8082}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /actuator/health, port: 8082}
+            initialDelaySeconds: 45
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 100m, memory: 384Mi}
+            limits: {cpu: '1', memory: 768Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oficina-execution
+spec:
+  selector: {app: oficina-execution}
+  ports:
+    - port: 8082
+      targetPort: 8082

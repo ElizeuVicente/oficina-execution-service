@@ -1,0 +1,21 @@
+services:
+  mongo:
+    image: mongo:7
+    volumes: ["execution-data:/data/db"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  execution:
+    build: .
+    environment:
+      EXECUTION_MONGO_URI: mongodb://mongo:27017/execution
+      EXECUTION_SERVICE_TOKEN: ${EXECUTION_SERVICE_TOKEN:?Configure EXECUTION_SERVICE_TOKEN with at least 32 characters}
+      EXECUTION_ALLOWED_BRANCHES: ${EXECUTION_ALLOWED_BRANCHES:-}
+    ports: ["127.0.0.1:8082:8082"]
+    depends_on:
+      mongo:
+        condition: service_healthy
+volumes:
+  execution-data:
